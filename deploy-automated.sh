@@ -13,9 +13,9 @@ NC='\033[0m'
 # Configuration with defaults
 STACK_NAME="apra-cpg-234-compliance-dashboard"
 REGION=${AWS_DEFAULT_REGION:-"ap-southeast-2"}
-TIMESTAMP=$(date +%s)
-CONFORMANCE_PACK_BUCKET="mymlpg-conformance-packs-${TIMESTAMP}"
-DASHBOARD_BUCKET_NAME="mymlpg-compliance-dashboard-${TIMESTAMP}"
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+CONFORMANCE_PACK_BUCKET="mymlpg-conformance-packs-${ACCOUNT_ID}"
+DASHBOARD_BUCKET_NAME="mymlpg-compliance-dashboard-${ACCOUNT_ID}"
 ORGANIZATION_ID=""
 
 print_header() {

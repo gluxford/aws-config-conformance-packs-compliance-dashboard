@@ -312,44 +312,42 @@ Resources:
         RegionConcurrencyType: PARALLEL
         MaxConcurrentPercentage: 100
         FailureTolerancePercentage: 10
-      TemplateBody: !Sub |
+      Parameters:
+        - ParameterKey: AuditAccountId
+          ParameterValue: !Ref 'AWS::AccountId'
+        - ParameterKey: ConformancePackBucket
+          ParameterValue: !Sub 'mymlpg-conformance-packs-${AWS::AccountId}'
+      TemplateBody: |
         AWSTemplateFormatVersion: '2010-09-09'
         Description: 'Deploy conformance pack and IAM role'
         
         Parameters:
           AuditAccountId:
             Type: String
-            Default: '${AWS::AccountId}'
+          ConformancePackBucket:
+            Type: String
         
         Resources:
           ConfigComplianceRole:
             Type: AWS::IAM::Role
             Properties:
-              RoleName: '${ConformancePackName}-ComplianceRole'
+              RoleName: 'APRA-CPG-234-Compliance-ComplianceRole'
               AssumeRolePolicyDocument:
                 Version: '2012-10-17'
                 Statement:
                   - Effect: Allow
                     Principal:
-                      AWS: !Sub 'arn:aws:iam::${!Ref AuditAccountId}:root'
+                      AWS: !Sub 'arn:aws:iam::${AuditAccountId}:root'
                     Action: sts:AssumeRole
               ManagedPolicyArns:
                 - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
                 - arn:aws:iam::aws:policy/ReadOnlyAccess
-              Policies:
-                - PolicyName: ConfigCompliancePolicy
-                  PolicyDocument:
-                    Version: '2012-10-17'
-                    Statement:
-                      - Effect: Allow
-                        Action:
-                          - config:GetComplianceDetailsByConfigRule
-                          - config:GetComplianceDetailsByResource
-                          - config:GetComplianceSummaryByConfigRule
-                          - config:DescribeConfigRules
-                          - config:DescribeConformancePacks
-                          - config:GetConformancePackComplianceDetails
-                        Resource: '*'
+          
+          ConformancePack:
+            Type: AWS::Config::ConformancePack
+            Properties:
+              ConformancePackName: 'APRA-CPG-234-Compliance'
+              TemplateS3Uri: !Sub 'https://${ConformancePackBucket}.s3.amazonaws.com/conformance-packs/Operational-Best-Practices-for-APRA-CPG-234.yaml'
 
 Outputs:
   DashboardURL:
