@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AWS Config Compliance Dashboard</title>
+    <meta charset="UTF-8">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e6ed;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            padding: 20px;
+        }
+        .header { 
+            text-align: center;
+            margin-bottom: 30px;
+            background: rgba(30, 41, 59, 0.95); 
+            padding: 30px; 
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        h1 { 
+            margin: 0;
+            font-size: 2.5em;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
+            background: rgba(30, 41, 59, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            color: #cbd5e1;
+            font-size: 0.9em;
+        }
+        select, button {
+            padding: 8px 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            background: rgba(51, 65, 85, 0.8);
+            color: #e0e6ed;
+            font-size: 0.9em;
+        }
+        button {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            background: linear-gradient(135deg, #2563eb, #1e40af);
+            transform: translateY(-1px);
+        }
+        .export-buttons {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+        }
+        .tabs {
+            display: flex;
+            background: rgba(30, 41, 59, 0.95);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .tab {
+            padding: 15px 20px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: #94a3b8;
+            white-space: nowrap;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+        .tab.active {
+            color: #60a5fa;
+            border-bottom-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .tab:hover {
+            color: #93c5fd;
+            background: rgba(59, 130, 246, 0.05);
+        }
+        .tab-content {
+            display: none;
+            background: rgba(30, 41, 59, 0.95);
+            border-radius: 16px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.1) 100%);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border-left: 4px solid #3b82f6;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.2);
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #60a5fa;
+            margin-bottom: 5px;
+        }
+        .metric-label {
+            color: #cbd5e1;
+            font-size: 0.85em;
+        }
+        .chart-container {
+            background: rgba(51, 65, 85, 0.8);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid rgba(255,255,255,0.1);
+            max-width: 400px;
+        }
+        .accounts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .account-card {
+            background: linear-gradient(135deg, rgba(51, 65, 85, 0.8) 0%, rgba(30, 41, 59, 0.8) 100%);
+            border-radius: 12px;
+            padding: 15px;
+            border-left: 4px solid #3b82f6;
+            transition: transform 0.2s ease;
+        }
+        .account-card:hover {
+            transform: translateY(-2px);
+        }
+        .compliance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(51, 65, 85, 0.8);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .compliance-table th,
+        .compliance-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-size: 0.9em;
+        }
+        .compliance-table th {
+            background: rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+            font-weight: 600;
+        }
+        .compliance-table tr:hover {
+            background: rgba(59, 130, 246, 0.05);
+        }
+        .status-compliant {
+            color: #22c55e;
+            font-weight: bold;
+        }
+        .status-non-compliant {
+            color: #ef4444;
+            font-weight: bold;
+        }
+        .remediation-link {
+            color: #60a5fa;
+            text-decoration: none;
+            font-size: 0.85em;
+            margin-right: 8px;
+            display: inline-block;
+        }
+        .remediation-link:hover {
+            color: #93c5fd;
+            text-decoration: underline;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #94a3b8;
+            font-size: 1.2em;
+        }
+        .error {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%);
+            color: #fca5a5;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            border-left: 4px solid #ef4444;
+        }
+        h3 {
+            color: #f8fafc;
+            margin-top: 0;
+            border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+            padding-bottom: 10px;
+            font-size: 1.3em;
+        }
+        .progress-bar {
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            height: 6px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            background: #22c55e;
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+        }
+        .overview-layout {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 1200px) {
+            .overview-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AWS Config Compliance Dashboard</h1>
+            <p>Real-time compliance monitoring across all conformance packs</p>
+            <p id="last-updated" style="font-size: 0.9em; color: #94a3b8;"></p>
+        </div>
+
+        <div class="controls">
+            <div class="filter-group">
+                <label>Filter by Account:</label>
+                <select id="account-filter" onchange="applyFilters()">
+                    <option value="">All Accounts</option>
+                </select>
+            </div>
+            <div class="export-buttons">
+                <button onclick="exportToExcel()">Export to Excel</button>
+                <button onclick="exportToPowerPoint()">Export to PowerPoint</button>
+            </div>
+        </div>
+
+        <div class="tabs" id="tabs">
+            <button class="tab active" onclick="showTab('overview')">Overview</button>
+        </div>
+
+        <div id="overview" class="tab-content active">
+            <div class="loading" id="loading">Loading compliance data...</div>
+            <div id="overview-content" style="display:none;">
+                <div class="overview-layout">
+                    <div>
+                        <div class="metrics-grid" id="metrics"></div>
+                        <div id="accounts-section">
+                            <h3>Account Compliance Breakdown</h3>
+                            <div class="accounts-grid" id="accounts"></div>
+                        </div>
+                        <div id="packs-section">
+                            <h3>Conformance Pack Compliance</h3>
+                            <div class="accounts-grid" id="conformance-packs"></div>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Compliance Overview</h3>
+                        <canvas id="complianceChart" width="300" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allData = {};
+        let filteredData = {};
+        let selectedAccounts = [];
+        let complianceChart = null;
+        
+        // Enhanced remediation suggestions with better rule matching
+        function getRemediationForRule(ruleName) {
+            // Remove conformance pack suffixes and normalize rule names
+            const normalizedRule = ruleName
+                .replace(/-conformance-pack-[a-z0-9]+$/i, '')
+                .replace(/-[a-z0-9]{8,}$/i, '')
+                .toLowerCase();
+            
+            const remediationMap = {
+                'iam-password-policy': {
+                    description: 'Configure strong IAM password policy with minimum requirements',
+                    documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html',
+                    ssm: 'AWSConfigRemediation-SetIAMPasswordPolicy'
+                },
+                'root-access-key-check': {
+                    description: 'Remove root access keys to improve security',
+                    documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_add-key',
+                    scp: 'https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_examples.html#example-scp-deny-root-user'
+                },
+                'mfa-enabled-for-iam-console-access': {
+                    description: 'Enable MFA for IAM console access',
+                    documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable.html',
+                    ssm: 'AWSConfigRemediation-EnableMFAForIAMUser'
+                },
+                'subnet-auto-assign-public-ip-disabled': {
+                    description: 'Disable auto-assign public IP for subnets',
+                    documentation: 'https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html#subnet-public-ip',
+                    ssm: 'AWSConfigRemediation-DisableSubnetAutoAssignPublicIP'
+                },
+                's3-bucket-public-read-prohibited': {
+                    description: 'Block S3 bucket public read access',
+                    documentation: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html',
+                    ssm: 'AWSConfigRemediation-RemoveS3BucketPublicReadAccess'
+                },
+                's3-bucket-public-write-prohibited': {
+                    description: 'Block S3 bucket public write access',
+                    documentation: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html',
+                    ssm: 'AWSConfigRemediation-RemoveS3BucketPublicWriteAccess'
+                },
+                'cloudtrail-enabled': {
+                    description: 'Enable CloudTrail logging for audit trail',
+                    documentation: 'https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-create-and-update-a-trail.html',
+                    ssm: 'AWSConfigRemediation-CreateCloudTrail'
+                },
+                'vpc-flow-logs-enabled': {
+                    description: 'Enable VPC Flow Logs for network monitoring',
+                    documentation: 'https://docs.aws.amazon.com/vpc/latest/userguide/flow-logs.html',
+                    ssm: 'AWSConfigRemediation-EnableVPCFlowLogs'
+                },
+                'encrypted-volumes': {
+                    description: 'Enable EBS volume encryption',
+                    documentation: 'https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html',
+                    ssm: 'AWSConfigRemediation-EncryptEBSVolume'
+                }
+            };
+            
+            // Try exact match first
+            if (remediationMap[normalizedRule]) {
+                return remediationMap[normalizedRule];
+            }
+            
+            // Try partial matches
+            for (const [key, value] of Object.entries(remediationMap)) {
+                if (normalizedRule.includes(key) || key.includes(normalizedRule)) {
+                    return value;
+                }
+            }
+            
+            // Default remediation
+            return {
+                description: 'Review AWS Config rule documentation for remediation steps',
+                documentation: 'https://docs.aws.amazon.com/config/latest/developerguide/managed-rules-by-aws-config.html'
+            };
+        }
+
+        // Enhanced remediation suggestions mapping
+        const remediationSuggestions = {
+            'root-access-key-check': {
+                description: 'Remove root access keys to improve security',
+                documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-user.html#id_root-user_manage_add-key',
+                ssm: 'AWSConfigRemediation-RemoveRootAccessKeys',
+                scp: 'https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_examples.html#example-scp-deny-root-user'
+            },
+            'mfa-enabled-for-iam-console-access': {
+                description: 'Enable MFA for IAM console access',
+                documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable.html',
+                ssm: 'AWSConfigRemediation-EnableMFAForIAMUser'
+            },
+            'iam-password-policy': {
+                description: 'Configure strong IAM password policy',
+                documentation: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_passwords_account-policy.html',
+                ssm: 'AWSConfigRemediation-SetIAMPasswordPolicy'
+            },
+            's3-bucket-public-read-prohibited': {
+                description: 'Block S3 bucket public read access',
+                documentation: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html',
+                ssm: 'AWSConfigRemediation-RemoveS3BucketPublicReadAccess'
+            },
+            's3-bucket-public-write-prohibited': {
+                description: 'Block S3 bucket public write access',
+                documentation: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html',
+                ssm: 'AWSConfigRemediation-RemoveS3BucketPublicWriteAccess'
+            }
+        };
+
+        async function loadData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('overview-content').style.display = 'none';
+
+                const response = await fetch('./data/compliance-summary.json');
+                if (!response.ok) throw new Error('Failed to fetch compliance data');
+                allData = await response.json();
+                
+                // Initialize filtered data
+                filteredData = JSON.parse(JSON.stringify(allData));
+                
+                populateAccountFilter();
+                renderOverview();
+                createConformancePackTabs();
+                
+                document.getElementById('last-updated').textContent = 
+                    `Last updated: ${new Date(allData.lastUpdated).toLocaleString()}`;
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('overview-content').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('loading').innerHTML = `<div class="error">Error loading data: ${error.message}</div>`;
+            }
+        }
+
+        function populateAccountFilter() {
+            const select = document.getElementById('account-filter');
+            select.innerHTML = '<option value="">All Accounts</option>';
+            
+            allData.accounts.forEach(account => {
+                const option = document.createElement('option');
+                option.value = account.accountId;
+                option.textContent = `${account.accountName} (${account.accountId})`;
+                select.appendChild(option);
+            });
+        }
+
+        function applyFilters() {
+            const accountFilter = document.getElementById('account-filter').value;
+            
+            if (accountFilter) {
+                selectedAccounts = [accountFilter];
+                // Filter data more efficiently
+                filteredData = {
+                    ...allData,
+                    conformancePackDetails: allData.conformancePackDetails ? 
+                        allData.conformancePackDetails.filter(p => p.AccountId === accountFilter) : [],
+                    nonCompliantDetails: allData.nonCompliantDetails ? 
+                        allData.nonCompliantDetails.filter(d => d.AccountId === accountFilter) : []
+                };
+                
+                // Recalculate organization compliance for filtered data
+                const filteredRules = allData.rulesCompliance ? 
+                    allData.rulesCompliance.filter(r => r.AccountId === accountFilter) : [];
+                const compliant = filteredRules.filter(r => r.Compliance?.ComplianceType === 'COMPLIANT').length;
+                const nonCompliant = filteredRules.filter(r => r.Compliance?.ComplianceType === 'NON_COMPLIANT').length;
+                const total = compliant + nonCompliant;
+                
+                filteredData.organizationCompliance = {
+                    compliantRules: compliant,
+                    nonCompliantRules: nonCompliant,
+                    totalRules: total,
+                    compliancePercentage: total > 0 ? Math.round((compliant / total) * 100) : 0
+                };
+            } else {
+                selectedAccounts = [];
+                filteredData = JSON.parse(JSON.stringify(allData));
+            }
+            
+            renderOverview();
+            updateAllTabs();
+        }
+
+        function renderOverview() {
+            renderMetrics();
+            renderComplianceChart();
+            renderAccountsBreakdown();
+            renderConformancePacksBreakdown();
+        }
+
+        function renderMetrics() {
+            const org = filteredData.organizationCompliance;
+            const totalPacks = filteredData.conformancePackDetails ? filteredData.conformancePackDetails.length : 0;
+            const uniquePacks = filteredData.conformancePackDetails ? 
+                [...new Set(filteredData.conformancePackDetails.map(p => p.ConformancePackName))].length : 0;
+            const accountCount = selectedAccounts.length > 0 ? selectedAccounts.length : allData.accounts.length;
+
+            document.getElementById('metrics').innerHTML = `
+                <div class="metric-card">
+                    <div class="metric-value">${org.compliancePercentage}%</div>
+                    <div class="metric-label">Overall Compliance</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${org.totalRules}</div>
+                    <div class="metric-label">Total Rules</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${org.compliantRules}</div>
+                    <div class="metric-label">Compliant Rules</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${org.nonCompliantRules}</div>
+                    <div class="metric-label">Non-Compliant Rules</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${uniquePacks}</div>
+                    <div class="metric-label">Conformance Packs</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${accountCount}</div>
+                    <div class="metric-label">Accounts</div>
+                </div>
+            `;
+        }
+
+        function renderComplianceChart() {
+            const ctx = document.getElementById('complianceChart').getContext('2d');
+            const org = filteredData.organizationCompliance;
+
+            // Clear existing chart safely
+            if (complianceChart) {
+                complianceChart.destroy();
+            }
+
+            complianceChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Compliant', 'Non-Compliant'],
+                    datasets: [{
+                        data: [org.compliantRules, org.nonCompliantRules],
+                        backgroundColor: ['#22c55e', '#ef4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#e0e6ed'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderAccountsBreakdown() {
+            if (!filteredData.conformancePackDetails) {
+                document.getElementById('accounts').innerHTML = '<p>Account breakdown will be available once conformance pack details are loaded.</p>';
+                return;
+            }
+
+            const accountCompliance = {};
+            const accountsToShow = selectedAccounts.length > 0 ? 
+                allData.accounts.filter(a => selectedAccounts.includes(a.accountId)) : 
+                allData.accounts;
+            
+            accountsToShow.forEach(account => {
+                const accountPacks = filteredData.conformancePackDetails.filter(p => p.AccountId === account.accountId);
+                let totalCompliant = 0;
+                let totalRules = 0;
+                
+                accountPacks.forEach(pack => {
+                    totalCompliant += pack.Compliance?.CompliantRuleCount || 0;
+                    totalRules += pack.Compliance?.TotalRuleCount || 0;
+                });
+                
+                const percentage = totalRules > 0 ? Math.round((totalCompliant / totalRules) * 100) : 0;
+                
+                accountCompliance[account.accountId] = {
+                    name: account.accountName,
+                    compliant: totalCompliant,
+                    total: totalRules,
+                    percentage
+                };
+            });
+
+            const accountsHtml = Object.entries(accountCompliance).map(([accountId, data]) => `
+                <div class="account-card">
+                    <h4>${data.name}</h4>
+                    <p><strong>Account ID:</strong> ${accountId}</p>
+                    <p><strong>Compliance:</strong> ${data.percentage}% (${data.compliant}/${data.total})</p>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${data.percentage}%;"></div>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('accounts').innerHTML = accountsHtml;
+        }
+
+        function renderConformancePacksBreakdown() {
+            if (!filteredData.conformancePackDetails) {
+                document.getElementById('conformance-packs').innerHTML = '<p>Conformance pack details will be available once data is loaded.</p>';
+                return;
+            }
+
+            const packCompliance = {};
+            
+            filteredData.conformancePackDetails.forEach(pack => {
+                if (!packCompliance[pack.ConformancePackName]) {
+                    packCompliance[pack.ConformancePackName] = {
+                        compliant: 0,
+                        total: 0,
+                        accounts: new Set()
+                    };
+                }
+                
+                packCompliance[pack.ConformancePackName].compliant += pack.Compliance?.CompliantRuleCount || 0;
+                packCompliance[pack.ConformancePackName].total += pack.Compliance?.TotalRuleCount || 0;
+                packCompliance[pack.ConformancePackName].accounts.add(pack.AccountId);
+            });
+
+            const packsHtml = Object.entries(packCompliance).map(([packName, data]) => {
+                const percentage = data.total > 0 ? Math.round((data.compliant / data.total) * 100) : 0;
+                const shortName = packName.replace(/^OrgConformsPack-AWS-QuickSetup-/, '').replace(/-[a-z0-9]+$/, '');
+                
+                return `
+                    <div class="account-card">
+                        <h4>${shortName}</h4>
+                        <p><strong>Accounts:</strong> ${data.accounts.size}</p>
+                        <p><strong>Compliance:</strong> ${percentage}% (${data.compliant}/${data.total})</p>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${percentage}%;"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('conformance-packs').innerHTML = packsHtml;
+        }
+
+        function createConformancePackTabs() {
+            if (!allData.conformancePackDetails) return;
+            
+            const uniquePacks = [...new Set(allData.conformancePackDetails.map(p => p.ConformancePackName))];
+            const tabsContainer = document.getElementById('tabs');
+            
+            // Remove existing pack tabs
+            const existingTabs = tabsContainer.querySelectorAll('.tab:not([onclick*="overview"])');
+            existingTabs.forEach(tab => tab.remove());
+            
+            uniquePacks.forEach(packName => {
+                const shortName = packName.replace(/^OrgConformsPack-AWS-QuickSetup-/, '').replace(/-[a-z0-9]+$/, '');
+                const tabId = packName.replace(/[^a-zA-Z0-9]/g, '-');
+                
+                // Add tab button
+                const tabButton = document.createElement('button');
+                tabButton.className = 'tab';
+                tabButton.textContent = shortName;
+                tabButton.onclick = () => showTab(tabId);
+                tabsContainer.appendChild(tabButton);
+                
+                // Remove existing tab content if it exists
+                const existingContent = document.getElementById(tabId);
+                if (existingContent) existingContent.remove();
+                
+                // Add tab content
+                const tabContent = document.createElement('div');
+                tabContent.id = tabId;
+                tabContent.className = 'tab-content';
+                tabContent.innerHTML = renderConformancePackDetail(packName);
+                document.querySelector('.container').appendChild(tabContent);
+            });
+        }
+
+        function updateAllTabs() {
+            if (!allData.conformancePackDetails) return;
+            
+            const uniquePacks = [...new Set(allData.conformancePackDetails.map(p => p.ConformancePackName))];
+            
+            uniquePacks.forEach(packName => {
+                const tabId = packName.replace(/[^a-zA-Z0-9]/g, '-');
+                const tabContent = document.getElementById(tabId);
+                if (tabContent) {
+                    tabContent.innerHTML = renderConformancePackDetail(packName);
+                }
+            });
+        }
+
+        function renderConformancePackDetail(packName) {
+            const packData = filteredData.conformancePackDetails ? 
+                filteredData.conformancePackDetails.filter(p => p.ConformancePackName === packName) : [];
+            const shortName = packName.replace(/^OrgConformsPack-AWS-QuickSetup-/, '').replace(/-[a-z0-9]+$/, '');
+
+            const accountBreakdown = packData.map(pack => {
+                const account = allData.accounts.find(a => a.accountId === pack.AccountId);
+                const accountName = account ? account.accountName : pack.AccountId;
+                const compliance = pack.Compliance || {};
+                const percentage = compliance.TotalRuleCount > 0 ? 
+                    Math.round((compliance.CompliantRuleCount / compliance.TotalRuleCount) * 100) : 0;
+                
+                return `
+                    <div class="account-card">
+                        <h4>${accountName}</h4>
+                        <p><strong>Account ID:</strong> ${pack.AccountId}</p>
+                        <p><strong>Compliance:</strong> ${percentage}% (${compliance.CompliantRuleCount || 0}/${compliance.TotalRuleCount || 0})</p>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${percentage}%;"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Get real non-compliant rules for this conformance pack
+            const nonCompliantRules = filteredData.nonCompliantDetails ? 
+                filteredData.nonCompliantDetails.filter(detail => {
+                    return packData.some(pack => pack.AccountId === detail.AccountId);
+                }) : [];
+
+            const rulesTable = nonCompliantRules.length > 0 ? `
+                <h3>Non-Compliant Rules</h3>
+                <table class="compliance-table">
+                    <thead>
+                        <tr>
+                            <th>Rule Name</th>
+                            <th>Account</th>
+                            <th>Resource Type</th>
+                            <th>Status</th>
+                            <th>Description</th>
+                            <th>Remediation Resources</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${nonCompliantRules.slice(0, 50).map(rule => {
+                            const account = allData.accounts.find(a => a.accountId === rule.AccountId);
+                            const accountName = account ? account.accountName : rule.AccountId;
+                            const remediation = getRemediationForRule(rule.ConfigRuleName);
+                            
+                            return `
+                                <tr>
+                                    <td>${rule.ConfigRuleName}</td>
+                                    <td>${accountName}</td>
+                                    <td>${rule.ResourceType || 'N/A'}</td>
+                                    <td><span class="status-non-compliant">NON_COMPLIANT</span></td>
+                                    <td>${remediation.description || 'No description available'}</td>
+                                    <td>
+                                        ${remediation.documentation ? 
+                                            `<a href="${remediation.documentation}" target="_blank" class="remediation-link">📖 Documentation</a>` : 
+                                            ''
+                                        }
+                                        ${remediation.ssm ? 
+                                            `<a href="https://console.aws.amazon.com/systems-manager/documents/${remediation.ssm}" target="_blank" class="remediation-link">🔧 SSM Document</a>` : 
+                                            ''
+                                        }
+                                        ${remediation.scp ? 
+                                            `<a href="${remediation.scp}" target="_blank" class="remediation-link">🛡️ SCP Example</a>` : 
+                                            ''
+                                        }
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            ` : '<p>All rules are compliant for this conformance pack in the selected accounts.</p>';
+
+            return `
+                <h3>${shortName} - Detailed View</h3>
+                <div class="accounts-grid">
+                    ${accountBreakdown}
+                </div>
+                ${rulesTable}
+            `;
+        }
+
+        function showTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tabId).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+
+        function exportToExcel() {
+            alert('Excel export functionality will be implemented');
+        }
+
+        function exportToPowerPoint() {
+            alert('PowerPoint export functionality will be implemented');
+        }
+
+        // Load data on page load
+        loadData();
+        
+        // Refresh data every 5 minutes
+        setInterval(loadData, 300000);
+    </script>
+</body>
+</html>
