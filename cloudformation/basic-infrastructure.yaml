@@ -49,7 +49,7 @@ Resources:
             Effect: Allow
             Principal: '*'
             Action: s3:GetObject
-            Resource: !Sub '${DashboardBucket}/*'
+            Resource: !Sub 'arn:aws:s3:::${DashboardBucket}/*'
 
   # Lambda execution role
   LambdaExecutionRole:

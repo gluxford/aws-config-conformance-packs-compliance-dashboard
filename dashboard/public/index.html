@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>APRA CPG 234 Compliance Dashboard</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.8.0/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: #f5f5f5;
+        }
+        .dashboard { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1); 
+            margin-bottom: 30px; 
+            text-align: center;
+        }
+        .header h1 { margin: 0 0 10px 0; color: #1890ff; font-size: 2.5em; }
+        .header p { margin: 0; color: #666; font-size: 1.1em; }
+        
+        .nav-tabs { 
+            display: flex; 
+            background: white; 
+            border-radius: 12px; 
+            margin-bottom: 20px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .nav-tab { 
+            flex: 1; 
+            padding: 15px 20px; 
+            background: #f8f9fa; 
+            border: none; 
+            cursor: pointer; 
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .nav-tab.active { background: #1890ff; color: white; }
+        .nav-tab:hover:not(.active) { background: #e6f7ff; }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .metrics { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px; 
+        }
+        .metric-card { 
+            background: white; 
+            padding: 25px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            border-left: 5px solid #1890ff;
+            transition: transform 0.2s ease;
+        }
+        .metric-card:hover { transform: translateY(-2px); }
+        .metric-card h3 { margin: 0 0 15px 0; color: #333; font-size: 1.1em; }
+        .metric-value { font-size: 2.5em; font-weight: bold; margin: 10px 0; }
+        .metric-subtitle { color: #666; font-size: 0.9em; }
+        
+        .compliant { color: #52c41a; }
+        .non-compliant { color: #ff4d4f; }
+        .warning { color: #faad14; }
+        
+        .chart-container { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1); 
+            margin-bottom: 30px; 
+        }
+        .chart-container h3 { margin: 0 0 20px 0; color: #333; font-size: 1.4em; }
+        
+        .export-section { 
+            background: white; 
+            padding: 25px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1); 
+            margin-bottom: 30px;
+        }
+        .export-buttons { display: flex; gap: 15px; flex-wrap: wrap; }
+        .export-btn { 
+            padding: 12px 24px; 
+            background: #1890ff; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.3s ease;
+        }
+        .export-btn:hover { background: #40a9ff; }
+        .export-btn i { font-size: 18px; }
+        
+        .compliance-table { 
+            background: white; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1); 
+            overflow: hidden;
+        }
+        .table-header { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-bottom: 1px solid #e8e8e8;
+        }
+        .table-content { max-height: 600px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #f0f0f0; }
+        th { background: #fafafa; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+        
+        .remediation-card { 
+            background: #fff7e6; 
+            border: 1px solid #ffd591; 
+            border-radius: 8px; 
+            padding: 15px; 
+            margin: 10px 0;
+        }
+        .remediation-title { font-weight: bold; color: #d46b08; margin-bottom: 8px; }
+        .remediation-description { color: #8c4a00; margin-bottom: 10px; }
+        .remediation-action { color: #614700; font-style: italic; }
+        
+        .priority-high { border-left: 4px solid #ff4d4f; }
+        .priority-medium { border-left: 4px solid #faad14; }
+        .priority-low { border-left: 4px solid #52c41a; }
+        .priority-critical { border-left: 4px solid #722ed1; }
+        
+        .loading { 
+            text-align: center; 
+            padding: 100px; 
+            font-size: 1.2em; 
+            color: #666;
+        }
+        .loading i { font-size: 2em; margin-bottom: 20px; display: block; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .error { 
+            background: #fff2f0; 
+            border: 1px solid #ffccc7; 
+            color: #a8071a; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin: 20px 0;
+        }
+        
+        .account-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+            gap: 20px; 
+        }
+        .account-card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .account-name { font-weight: bold; margin-bottom: 10px; }
+        .account-id { color: #666; font-size: 0.9em; margin-bottom: 15px; }
+        .compliance-bar { 
+            height: 8px; 
+            background: #f0f0f0; 
+            border-radius: 4px; 
+            overflow: hidden; 
+            margin: 10px 0;
+        }
+        .compliance-fill { height: 100%; transition: width 0.3s ease; }
+        
+        @media (max-width: 768px) {
+            .dashboard { padding: 10px; }
+            .metrics { grid-template-columns: 1fr; }
+            .nav-tabs { flex-direction: column; }
+            .export-buttons { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script>
+        const { useState, useEffect, useMemo } = React;
+        const { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line } = Recharts;
+        
+        function ComplianceDashboard() {
+            const [data, setData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [activeTab, setActiveTab] = useState('overview');
+            const [selectedPack, setSelectedPack] = useState(null);
+            
+            useEffect(() => {
+                fetchComplianceData();
+                const interval = setInterval(fetchComplianceData, 300000); // Refresh every 5 minutes
+                return () => clearInterval(interval);
+            }, []);
+            
+            const fetchComplianceData = async () => {
+                try {
+                    setError(null);
+                    const response = await fetch('./data/compliance-summary.json');
+                    if (!response.ok) throw new Error('Failed to fetch compliance data');
+                    const complianceData = await response.json();
+                    setData(complianceData);
+                    setLoading(false);
+                } catch (error) {
+                    console.error('Error fetching compliance data:', error);
+                    setError(error.message);
+                    setLoading(false);
+                }
+            };
+            
+            const exportToCSV = () => {
+                if (!data) return;
+                
+                const ws = XLSX.utils.json_to_sheet(
+                    data.conformancePackSummary.map(pack => ({
+                        'Conformance Pack': pack.ConformancePackName,
+                        'Account ID': pack.AccountId,
+                        'Compliant Rules': pack.CompliantRuleCount,
+                        'Total Rules': pack.TotalRuleCount,
+                        'Compliance %': ((pack.CompliantRuleCount / pack.TotalRuleCount) * 100).toFixed(2)
+                    }))
+                );
+                
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Compliance Summary');
+                
+                // Add remediation sheet
+                const remediationData = [];
+                Object.entries(data.remediationSuggestions || {}).forEach(([packName, suggestions]) => {
+                    suggestions.forEach(suggestion => {
+                        remediationData.push({
+                            'Conformance Pack': packName,
+                            'Account ID': suggestion.accountId,
+                            'Rule Name': suggestion.ruleName,
+                            'Priority': suggestion.priority,
+                            'Remediation': suggestion.remediation
+                        });
+                    });
+                });
+                
+                if (remediationData.length > 0) {
+                    const remediationWs = XLSX.utils.json_to_sheet(remediationData);
+                    XLSX.utils.book_append_sheet(wb, remediationWs, 'Remediation Actions');
+                }
+                
+                XLSX.writeFile(wb, `compliance-report-${new Date().toISOString().split('T')[0]}.xlsx`);
+            };
+            
+            const exportToPowerPoint = () => {
+                if (!data) return;
+                
+                const pptx = new PptxGenJS();
+                
+                // Title slide
+                const titleSlide = pptx.addSlide();
+                titleSlide.addText('APRA CPG 234 Compliance Report', {
+                    x: 1, y: 2, w: 8, h: 1.5,
+                    fontSize: 32, bold: true, color: '1890ff'
+                });
+                titleSlide.addText(`Generated: ${new Date().toLocaleDateString()}`, {
+                    x: 1, y: 4, w: 8, h: 0.5,
+                    fontSize: 16, color: '666666'
+                });
+                
+                // Executive summary slide
+                const summarySlide = pptx.addSlide();
+                summarySlide.addText('Executive Summary', {
+                    x: 0.5, y: 0.5, w: 9, h: 1,
+                    fontSize: 24, bold: true
+                });
+                
+                const summaryData = [
+                    ['Total Accounts', data.accounts.length.toString()],
+                    ['Overall Compliance', `${data.organizationCompliance.compliancePercentage}%`],
+                    ['Compliant Rules', data.organizationCompliance.compliantRules.toString()],
+                    ['Non-Compliant Rules', data.organizationCompliance.nonCompliantRules.toString()]
+                ];
+                
+                summarySlide.addTable(summaryData, {
+                    x: 1, y: 2, w: 8, h: 3,
+                    fontSize: 14
+                });
+                
+                pptx.writeFile({ fileName: `compliance-report-${new Date().toISOString().split('T')[0]}.pptx` });
+            };
+            
+            const pieData = useMemo(() => {
+                if (!data) return [];
+                return [
+                    { name: 'Compliant', value: data.organizationCompliance.compliantRules, color: '#52c41a' },
+                    { name: 'Non-Compliant', value: data.organizationCompliance.nonCompliantRules, color: '#ff4d4f' }
+                ];
+            }, [data]);
+            
+            const barData = useMemo(() => {
+                if (!data) return [];
+                return data.conformancePackSummary.map(pack => ({
+                    name: pack.ConformancePackName.length > 25 ? 
+                          pack.ConformancePackName.substring(0, 25) + '...' : 
+                          pack.ConformancePackName,
+                    compliant: pack.CompliantRuleCount,
+                    nonCompliant: pack.TotalRuleCount - pack.CompliantRuleCount,
+                    total: pack.TotalRuleCount,
+                    accountId: pack.AccountId
+                }));
+            }, [data]);
+            
+            const accountData = useMemo(() => {
+                if (!data || !data.accountCompliance) return [];
+                return Object.entries(data.accountCompliance).map(([accountId, accountInfo]) => ({
+                    accountId,
+                    accountName: accountInfo.accountName,
+                    compliance: accountInfo.overallCompliancePercentage || 0,
+                    compliantRules: accountInfo.totalCompliant,
+                    totalRules: accountInfo.totalRules
+                }));
+            }, [data]);
+            
+            if (loading) {
+                return React.createElement('div', { className: 'loading' }, [
+                    React.createElement('i', { className: 'fas fa-spinner', key: 'spinner' }),
+                    'Loading compliance data...'
+                ]);
+            }
+            
+            if (error) {
+                return React.createElement('div', { className: 'error' }, [
+                    React.createElement('i', { className: 'fas fa-exclamation-triangle', key: 'icon' }),
+                    ` Error: ${error}`
+                ]);
+            }
+            
+            if (!data) {
+                return React.createElement('div', { className: 'loading' }, 'No compliance data available');
+            }
+            
+            return React.createElement('div', { className: 'dashboard' }, [
+                // Header
+                React.createElement('div', { className: 'header', key: 'header' }, [
+                    React.createElement('h1', { key: 'title' }, [
+                        React.createElement('i', { className: 'fas fa-shield-alt', style: { marginRight: '15px' } }),
+                        'APRA CPG 234 Compliance Dashboard'
+                    ]),
+                    React.createElement('p', { key: 'updated' }, `Last Updated: ${new Date(data.lastUpdated).toLocaleString()}`)
+                ]),
+                
+                // Navigation tabs
+                React.createElement('div', { className: 'nav-tabs', key: 'nav' }, [
+                    React.createElement('button', {
+                        className: `nav-tab ${activeTab === 'overview' ? 'active' : ''}`,
+                        onClick: () => setActiveTab('overview'),
+                        key: 'overview-tab'
+                    }, [React.createElement('i', { className: 'fas fa-chart-pie' }), ' Overview']),
+                    React.createElement('button', {
+                        className: `nav-tab ${activeTab === 'accounts' ? 'active' : ''}`,
+                        onClick: () => setActiveTab('accounts'),
+                        key: 'accounts-tab'
+                    }, [React.createElement('i', { className: 'fas fa-users' }), ' Accounts']),
+                    React.createElement('button', {
+                        className: `nav-tab ${activeTab === 'remediation' ? 'active' : ''}`,
+                        onClick: () => setActiveTab('remediation'),
+                        key: 'remediation-tab'
+                    }, [React.createElement('i', { className: 'fas fa-tools' }), ' Remediation']),
+                    React.createElement('button', {
+                        className: `nav-tab ${activeTab === 'export' ? 'active' : ''}`,
+                        onClick: () => setActiveTab('export'),
+                        key: 'export-tab'
+                    }, [React.createElement('i', { className: 'fas fa-download' }), ' Export'])
+                ]),
+                
+                // Overview Tab
+                React.createElement('div', {
+                    className: `tab-content ${activeTab === 'overview' ? 'active' : ''}`,
+                    key: 'overview-content'
+                }, [
+                    // Metrics
+                    React.createElement('div', { className: 'metrics', key: 'metrics' }, [
+                        React.createElement('div', { className: 'metric-card', key: 'total-accounts' }, [
+                            React.createElement('h3', { key: 'title' }, [
+                                React.createElement('i', { className: 'fas fa-building' }), ' Total Accounts'
+                            ]),
+                            React.createElement('div', { className: 'metric-value', key: 'value' }, data.accounts.length),
+                            React.createElement('div', { className: 'metric-subtitle', key: 'subtitle' }, 'Organization accounts')
+                        ]),
+                        React.createElement('div', { className: 'metric-card', key: 'compliance-rate' }, [
+                            React.createElement('h3', { key: 'title' }, [
+                                React.createElement('i', { className: 'fas fa-percentage' }), ' Overall Compliance'
+                            ]),
+                            React.createElement('div', { 
+                                className: `metric-value ${data.organizationCompliance.compliancePercentage >= 80 ? 'compliant' : 'non-compliant'}`,
+                                key: 'value'
+                            }, `${data.organizationCompliance.compliancePercentage}%`),
+                            React.createElement('div', { className: 'metric-subtitle', key: 'subtitle' }, 'Across all conformance packs')
+                        ]),
+                        React.createElement('div', { className: 'metric-card', key: 'compliant-rules' }, [
+                            React.createElement('h3', { key: 'title' }, [
+                                React.createElement('i', { className: 'fas fa-check-circle' }), ' Compliant Rules'
+                            ]),
+                            React.createElement('div', { className: 'metric-value compliant', key: 'value' }, data.organizationCompliance.compliantRules),
+                            React.createElement('div', { className: 'metric-subtitle', key: 'subtitle' }, `of ${data.organizationCompliance.totalRules} total rules`)
+                        ]),
+                        React.createElement('div', { className: 'metric-card', key: 'non-compliant-rules' }, [
+                            React.createElement('h3', { key: 'title' }, [
+                                React.createElement('i', { className: 'fas fa-exclamation-circle' }), ' Non-Compliant Rules'
+                            ]),
+                            React.createElement('div', { className: 'metric-value non-compliant', key: 'value' }, data.organizationCompliance.nonCompliantRules),
+                            React.createElement('div', { className: 'metric-subtitle', key: 'subtitle' }, 'Require attention')
+                        ])
+                    ]),
+                    
+                    // Charts
+                    React.createElement('div', { className: 'chart-container', key: 'pie-chart' }, [
+                        React.createElement('h3', { key: 'title' }, 'Organization Compliance Overview'),
+                        React.createElement(ResponsiveContainer, { width: '100%', height: 350, key: 'chart' },
+                            React.createElement(PieChart, null, [
+                                React.createElement(Pie, {
+                                    data: pieData,
+                                    cx: '50%',
+                                    cy: '50%',
+                                    outerRadius: 120,
+                                    dataKey: 'value',
+                                    label: ({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`
+                                }, pieData.map((entry, index) =>
+                                    React.createElement(Cell, { key: `cell-${index}`, fill: entry.color })
+                                )),
+                                React.createElement(Tooltip, {
+                                    formatter: (value, name) => [value, name]
+                                })
+                            ])
+                        )
+                    ]),
+                    
+                    React.createElement('div', { className: 'chart-container', key: 'bar-chart' }, [
+                        React.createElement('h3', { key: 'title' }, 'Conformance Pack Compliance by Account'),
+                        React.createElement(ResponsiveContainer, { width: '100%', height: 450, key: 'chart' },
+                            React.createElement(BarChart, { data: barData, margin: { bottom: 80 } }, [
+                                React.createElement(CartesianGrid, { strokeDasharray: '3 3' }),
+                                React.createElement(XAxis, { 
+                                    dataKey: 'name', 
+                                    angle: -45, 
+                                    textAnchor: 'end', 
+                                    height: 100,
+                                    fontSize: 12
+                                }),
+                                React.createElement(YAxis),
+                                React.createElement(Tooltip, {
+                                    formatter: (value, name) => [value, name],
+                                    labelFormatter: (label) => `Pack: ${label}`
+                                }),
+                                React.createElement(Legend),
+                                React.createElement(Bar, { 
+                                    dataKey: 'compliant', 
+                                    stackId: 'a', 
+                                    fill: '#52c41a', 
+                                    name: 'Compliant Rules' 
+                                }),
+                                React.createElement(Bar, { 
+                                    dataKey: 'nonCompliant', 
+                                    stackId: 'a', 
+                                    fill: '#ff4d4f', 
+                                    name: 'Non-Compliant Rules' 
+                                })
+                            ])
+                        )
+                    ])
+                ]),
+                
+                // Accounts Tab
+                React.createElement('div', {
+                    className: `tab-content ${activeTab === 'accounts' ? 'active' : ''}`,
+                    key: 'accounts-content'
+                }, [
+                    React.createElement('div', { className: 'account-grid', key: 'account-grid' },
+                        accountData.map(account =>
+                            React.createElement('div', { className: 'account-card', key: account.accountId }, [
+                                React.createElement('div', { className: 'account-name', key: 'name' }, account.accountName),
+                                React.createElement('div', { className: 'account-id', key: 'id' }, account.accountId),
+                                React.createElement('div', { key: 'compliance' }, [
+                                    React.createElement('div', { 
+                                        className: `metric-value ${account.compliance >= 80 ? 'compliant' : 'non-compliant'}`,
+                                        style: { fontSize: '1.8em', marginBottom: '10px' }
+                                    }, `${account.compliance.toFixed(1)}%`),
+                                    React.createElement('div', { className: 'compliance-bar' }, [
+                                        React.createElement('div', {
+                                            className: 'compliance-fill',
+                                            style: {
+                                                width: `${account.compliance}%`,
+                                                backgroundColor: account.compliance >= 80 ? '#52c41a' : '#ff4d4f'
+                                            }
+                                        })
+                                    ]),
+                                    React.createElement('div', { style: { marginTop: '10px', fontSize: '0.9em', color: '#666' } },
+                                        `${account.compliantRules} of ${account.totalRules} rules compliant`
+                                    )
+                                ])
+                            ])
+                        )
+                    )
+                ]),
+                
+                // Remediation Tab
+                React.createElement('div', {
+                    className: `tab-content ${activeTab === 'remediation' ? 'active' : ''}`,
+                    key: 'remediation-content'
+                }, [
+                    React.createElement('div', { className: 'chart-container', key: 'remediation-list' }, [
+                        React.createElement('h3', { key: 'title' }, 'Remediation Actions Required'),
+                        Object.entries(data.remediationSuggestions || {}).map(([packName, suggestions]) =>
+                            React.createElement('div', { key: packName, style: { marginBottom: '30px' } }, [
+                                React.createElement('h4', { 
+                                    key: 'pack-title',
+                                    style: { color: '#1890ff', marginBottom: '15px' }
+                                }, packName),
+                                suggestions.map((suggestion, index) =>
+                                    React.createElement('div', {
+                                        className: `remediation-card priority-${suggestion.priority.toLowerCase()}`,
+                                        key: `${packName}-${index}`
+                                    }, [
+                                        React.createElement('div', { className: 'remediation-title', key: 'title' }, [
+                                            React.createElement('i', { 
+                                                className: `fas fa-${suggestion.priority === 'Critical' ? 'exclamation-triangle' : 
+                                                                   suggestion.priority === 'High' ? 'exclamation-circle' : 
+                                                                   'info-circle'}`,
+                                                style: { marginRight: '8px' }
+                                            }),
+                                            suggestion.title,
+                                            React.createElement('span', { 
+                                                style: { 
+                                                    float: 'right', 
+                                                    fontSize: '0.8em', 
+                                                    background: '#f0f0f0', 
+                                                    padding: '2px 8px', 
+                                                    borderRadius: '4px' 
+                                                }
+                                            }, suggestion.priority)
+                                        ]),
+                                        React.createElement('div', { className: 'remediation-description', key: 'description' }, 
+                                            suggestion.description
+                                        ),
+                                        React.createElement('div', { className: 'remediation-action', key: 'action' }, [
+                                            React.createElement('strong', null, 'Remediation: '),
+                                            suggestion.remediation
+                                        ]),
+                                        React.createElement('div', { 
+                                            style: { marginTop: '10px', fontSize: '0.8em', color: '#666' },
+                                            key: 'details'
+                                        }, `Account: ${suggestion.accountId} | Region: ${suggestion.awsRegion}`)
+                                    ])
+                                )
+                            ])
+                        )
+                    ])
+                ]),
+                
+                // Export Tab
+                React.createElement('div', {
+                    className: `tab-content ${activeTab === 'export' ? 'active' : ''}`,
+                    key: 'export-content'
+                }, [
+                    React.createElement('div', { className: 'export-section', key: 'export-section' }, [
+                        React.createElement('h3', { key: 'title' }, 'Export Compliance Reports'),
+                        React.createElement('p', { key: 'description' }, 
+                            'Generate detailed reports for compliance analysis and executive presentations.'
+                        ),
+                        React.createElement('div', { className: 'export-buttons', key: 'buttons' }, [
+                            React.createElement('button', {
+                                className: 'export-btn',
+                                onClick: exportToCSV,
+                                key: 'csv-btn'
+                            }, [
+                                React.createElement('i', { className: 'fas fa-file-excel' }),
+                                'Export to Excel'
+                            ]),
+                            React.createElement('button', {
+                                className: 'export-btn',
+                                onClick: exportToPowerPoint,
+                                key: 'ppt-btn'
+                            }, [
+                                React.createElement('i', { className: 'fas fa-file-powerpoint' }),
+                                'Export to PowerPoint'
+                            ])
+                        ])
+                    ])
+                ])
+            ]);
+        }
+        
+        ReactDOM.render(React.createElement(ComplianceDashboard), document.getElementById('root'));
+    </script>
+</body>
+</html>
