@@ -568,33 +568,60 @@
         }
 
         function renderAccountsBreakdown() {
-            if (!filteredData.conformancePackDetails) {
-                document.getElementById('accounts').innerHTML = '<p>Account breakdown will be available once conformance pack details are loaded.</p>';
+            // Get all accounts that have either conformance pack details OR non-compliant details
+            const accountsWithData = new Set();
+            
+            if (filteredData.conformancePackDetails) {
+                filteredData.conformancePackDetails.forEach(p => accountsWithData.add(p.AccountId));
+            }
+            
+            if (filteredData.nonCompliantDetails) {
+                filteredData.nonCompliantDetails.forEach(d => accountsWithData.add(d.AccountId));
+            }
+            
+            if (accountsWithData.size === 0) {
+                document.getElementById('accounts').innerHTML = '<p>Account breakdown will be available once compliance data is loaded.</p>';
                 return;
             }
 
             const accountCompliance = {};
             const accountsToShow = selectedAccounts.length > 0 ? 
                 allData.accounts.filter(a => selectedAccounts.includes(a.accountId)) : 
-                allData.accounts;
+                allData.accounts.filter(a => accountsWithData.has(a.accountId));
             
             accountsToShow.forEach(account => {
-                const accountPacks = filteredData.conformancePackDetails.filter(p => p.AccountId === account.accountId);
+                const accountPacks = filteredData.conformancePackDetails ? 
+                    filteredData.conformancePackDetails.filter(p => p.AccountId === account.accountId) : [];
+                const accountNonCompliant = filteredData.nonCompliantDetails ? 
+                    filteredData.nonCompliantDetails.filter(d => d.AccountId === account.accountId) : [];
+                
                 let totalCompliant = 0;
                 let totalRules = 0;
                 
+                // Get data from conformance packs if available
                 accountPacks.forEach(pack => {
                     totalCompliant += pack.Compliance?.CompliantRuleCount || 0;
                     totalRules += pack.Compliance?.TotalRuleCount || 0;
                 });
                 
+                // If no conformance pack data, estimate from rules compliance
+                if (totalRules === 0 && allData.rulesCompliance) {
+                    const accountRules = allData.rulesCompliance.filter(r => r.AccountId === account.accountId);
+                    const compliant = accountRules.filter(r => r.Compliance?.ComplianceType === 'COMPLIANT').length;
+                    const nonCompliant = accountRules.filter(r => r.Compliance?.ComplianceType === 'NON_COMPLIANT').length;
+                    totalCompliant = compliant;
+                    totalRules = compliant + nonCompliant;
+                }
+                
                 const percentage = totalRules > 0 ? Math.round((totalCompliant / totalRules) * 100) : 0;
+                const nonCompliantCount = accountNonCompliant.length;
                 
                 accountCompliance[account.accountId] = {
                     name: account.accountName,
                     compliant: totalCompliant,
                     total: totalRules,
-                    percentage
+                    percentage,
+                    nonCompliantFindings: nonCompliantCount
                 };
             });
 
@@ -603,6 +630,7 @@
                     <h4>${data.name}</h4>
                     <p><strong>Account ID:</strong> ${accountId}</p>
                     <p><strong>Compliance:</strong> ${data.percentage}% (${data.compliant}/${data.total})</p>
+                    <p><strong>Non-Compliant Findings:</strong> ${data.nonCompliantFindings}</p>
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: ${data.percentage}%;"></div>
                     </div>
@@ -706,17 +734,45 @@
                 filteredData.conformancePackDetails.filter(p => p.ConformancePackName === packName) : [];
             const shortName = packName.replace(/^OrgConformsPack-AWS-QuickSetup-/, '').replace(/-[a-z0-9]+$/, '');
 
-            const accountBreakdown = packData.map(pack => {
-                const account = allData.accounts.find(a => a.accountId === pack.AccountId);
-                const accountName = account ? account.accountName : pack.AccountId;
-                const compliance = pack.Compliance || {};
-                const percentage = compliance.TotalRuleCount > 0 ? 
-                    Math.round((compliance.CompliantRuleCount / compliance.TotalRuleCount) * 100) : 0;
+            // Get all accounts that have either conformance pack data OR non-compliant findings
+            const accountsWithData = new Set();
+            packData.forEach(pack => accountsWithData.add(pack.AccountId));
+            
+            // Also include accounts with non-compliant findings for this conformance pack type
+            if (filteredData.nonCompliantDetails) {
+                filteredData.nonCompliantDetails.forEach(detail => {
+                    // Check if this rule might belong to this conformance pack
+                    if (detail.ConfigRuleName.toLowerCase().includes(shortName.toLowerCase()) || 
+                        packData.some(pack => pack.AccountId === detail.AccountId)) {
+                        accountsWithData.add(detail.AccountId);
+                    }
+                });
+            }
+
+            const accountBreakdown = Array.from(accountsWithData).map(accountId => {
+                const account = allData.accounts.find(a => a.accountId === accountId);
+                const accountName = account ? account.accountName : accountId;
+                const pack = packData.find(p => p.AccountId === accountId);
+                
+                let compliance = pack?.Compliance || {};
+                let percentage = 0;
+                
+                if (compliance.TotalRuleCount > 0) {
+                    percentage = Math.round((compliance.CompliantRuleCount / compliance.TotalRuleCount) * 100);
+                } else {
+                    // Estimate from rules compliance if no conformance pack data
+                    const accountRules = allData.rulesCompliance ? 
+                        allData.rulesCompliance.filter(r => r.AccountId === accountId) : [];
+                    const compliant = accountRules.filter(r => r.Compliance?.ComplianceType === 'COMPLIANT').length;
+                    const total = accountRules.length;
+                    percentage = total > 0 ? Math.round((compliant / total) * 100) : 0;
+                    compliance = { CompliantRuleCount: compliant, TotalRuleCount: total };
+                }
                 
                 return `
                     <div class="account-card">
                         <h4>${accountName}</h4>
-                        <p><strong>Account ID:</strong> ${pack.AccountId}</p>
+                        <p><strong>Account ID:</strong> ${accountId}</p>
                         <p><strong>Compliance:</strong> ${percentage}% (${compliance.CompliantRuleCount || 0}/${compliance.TotalRuleCount || 0})</p>
                         <div class="progress-bar">
                             <div class="progress-fill" style="width: ${percentage}%;"></div>
@@ -725,10 +781,47 @@
                 `;
             }).join('');
 
-            // Get real non-compliant rules for this conformance pack
+            // Get account IDs that have this conformance pack
+            const packAccountIds = packData.map(p => p.AccountId);
+
+            // Create a mapping of conformance pack names to their specific rule patterns
+            const packRuleMapping = {
+                'APRA-CPG-234-Compliance': (ruleName) => {
+                    // APRA rules typically don't have the org conformance pack prefix
+                    return !ruleName.includes('OrgConformsPack') && 
+                           (ruleName.includes('conformance-pack') || ruleName.includes('apra'));
+                },
+                'OrgConformsPack-AWS-QuickSetup-Operational-Best-Practices-for-AWS-Well-Architected-Security-Pillar': (ruleName) => {
+                    return ruleName.includes('security') || ruleName.includes('pillar') ||
+                           ruleName.includes('s3-bucket') || ruleName.includes('iam-') ||
+                           ruleName.includes('cloudtrail') || ruleName.includes('vpc');
+                },
+                'OrgConformsPack-AWS-QuickSetup-Operational-Best-Practices-for-CIS': (ruleName) => {
+                    return ruleName.includes('cis') || ruleName.includes('password-policy') ||
+                           ruleName.includes('root-access') || ruleName.includes('mfa');
+                },
+                'OrgConformsPack-AWS-QuickSetup-Operational-Best-Practices-for-NIST-CSF': (ruleName) => {
+                    return ruleName.includes('nist') || ruleName.includes('csf') ||
+                           ruleName.includes('encryption') || ruleName.includes('logging');
+                }
+            };
+            
+            // Get non-compliant rules specific to this conformance pack from ALL accounts
             const nonCompliantRules = filteredData.nonCompliantDetails ? 
                 filteredData.nonCompliantDetails.filter(detail => {
-                    return packData.some(pack => pack.AccountId === detail.AccountId);
+                    // Use the single conformance pack name if available
+                    if (detail.ConformancePackName) {
+                        return detail.ConformancePackName === packName;
+                    }
+                    
+                    // Fallback to pattern matching if no correlation data
+                    const mappingFunc = packRuleMapping[packName];
+                    if (mappingFunc) {
+                        return mappingFunc(detail.ConfigRuleName.toLowerCase());
+                    }
+                    
+                    // Final fallback: return false to avoid showing unrelated rules
+                    return false;
                 }) : [];
 
             const rulesTable = nonCompliantRules.length > 0 ? `
@@ -745,7 +838,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        ${nonCompliantRules.slice(0, 50).map(rule => {
+                        ${nonCompliantRules.slice(0, 100).map(rule => {
                             const account = allData.accounts.find(a => a.accountId === rule.AccountId);
                             const accountName = account ? account.accountName : rule.AccountId;
                             const remediation = getRemediationForRule(rule.ConfigRuleName);
