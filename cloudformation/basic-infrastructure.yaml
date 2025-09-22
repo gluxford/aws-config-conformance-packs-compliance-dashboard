@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Basic APRA CPG 234 Compliance Dashboard Infrastructure'
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: AWS Organization ID
+    AllowedPattern: '^o-[a-z0-9]{10,32}$'
+  
+  DashboardBucketName:
+    Type: String
+    Description: Unique S3 bucket name for hosting the dashboard
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+  
+  ConfigAggregatorName:
+    Type: String
+    Default: 'aws-controltower-GuardrailsComplianceAggregator'
+    Description: Name of the existing Config aggregator
+
+Resources:
+  # S3 Bucket for dashboard hosting
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DashboardBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # Bucket policy for public read access
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${DashboardBucket}/*'
+
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ComplianceDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - config:GetAggregateComplianceDetailsByConfigRule
+                  - config:GetAggregateConfigRuleComplianceSummary
+                  - config:GetAggregateConformancePackComplianceSummary
+                  - config:GetAggregateResourceConfig
+                  - config:DescribeConfigurationAggregators
+                  - config:DescribeConformancePacks
+                  - config:GetConformancePackComplianceDetails
+                  - organizations:ListAccounts
+                  - organizations:DescribeOrganization
+                  - sts:AssumeRole
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub 'arn:aws:s3:::${DashboardBucket}/*'
+
+  # Lambda function for data collection
+  ComplianceDataCollector:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'APRA-CPG-234-Compliance-data-collector'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          DASHBOARD_BUCKET: !Ref DashboardBucket
+          ORGANIZATION_ID: !Ref OrganizationId
+          CONFIG_AGGREGATOR_NAME: !Ref ConfigAggregatorName
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timezone
+          from decimal import Decimal
+          
+          class DecimalEncoder(json.JSONEncoder):
+              def default(self, obj):
+                  if isinstance(obj, Decimal):
+                      return float(obj)
+                  return super(DecimalEncoder, self).default(obj)
+          
+          def lambda_handler(event, context):
+              config_client = boto3.client('config')
+              s3_client = boto3.client('s3')
+              org_client = boto3.client('organizations')
+              
+              bucket = os.environ['DASHBOARD_BUCKET']
+              aggregator_name = os.environ['CONFIG_AGGREGATOR_NAME']
+              
+              try:
+                  # Get organization accounts
+                  accounts_response = org_client.list_accounts()
+                  accounts = [{'accountId': acc['Id'], 'accountName': acc['Name'], 'status': acc['Status']} 
+                             for acc in accounts_response['Accounts']]
+                  
+                  # Get conformance pack compliance summary
+                  try:
+                      compliance_summary = config_client.get_aggregate_conformance_pack_compliance_summary(
+                          ConfigurationAggregatorName=aggregator_name
+                      )
+                  except Exception as e:
+                      print(f"No conformance packs found yet: {str(e)}")
+                      compliance_summary = {'AggregateConformancePackComplianceSummaries': []}
+                  
+                  # Calculate organization-wide compliance
+                  org_compliance = calculate_org_compliance(compliance_summary)
+                  
+                  # Prepare dashboard data
+                  dashboard_data = {
+                      'lastUpdated': datetime.now(timezone.utc).isoformat(),
+                      'accounts': accounts,
+                      'conformancePackSummary': compliance_summary['AggregateConformancePackComplianceSummaries'],
+                      'organizationCompliance': org_compliance,
+                      'remediationSuggestions': {}
+                  }
+                  
+                  # Upload to S3
+                  s3_client.put_object(
+                      Bucket=bucket,
+                      Key='data/compliance-summary.json',
+                      Body=json.dumps(dashboard_data, indent=2, cls=DecimalEncoder),
+                      ContentType='application/json'
+                  )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('Data collection completed successfully')
+                  }
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'Error: {str(e)}')
+                  }
+          
+          def calculate_org_compliance(summary):
+              summaries = summary['AggregateConformancePackComplianceSummaries']
+              total_compliant = sum(pack.get('CompliantRuleCount', 0) for pack in summaries)
+              total_rules = sum(pack.get('TotalRuleCount', 0) for pack in summaries)
+              
+              return {
+                  'compliantRules': total_compliant,
+                  'totalRules': total_rules,
+                  'compliancePercentage': round((total_compliant / total_rules * 100) if total_rules > 0 else 0, 2),
+                  'nonCompliantRules': total_rules - total_compliant
+              }
+
+  # EventBridge rule for scheduled data collection
+  ComplianceDataSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Trigger compliance data collection every 4 hours'
+      ScheduleExpression: 'rate(4 hours)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ComplianceDataCollector.Arn
+          Id: ComplianceDataCollectorTarget
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ComplianceDataCollector
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ComplianceDataSchedule.Arn
+
+Outputs:
+  DashboardURL:
+    Description: URL of the compliance dashboard
+    Value: !Sub 'http://${DashboardBucket}.s3-website-${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardURL'
+  
+  DashboardBucket:
+    Description: S3 bucket hosting the dashboard
+    Value: !Ref DashboardBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardBucket'
+  
+  ConfigAggregatorName:
+    Description: Name of the Config aggregator
+    Value: !Ref ConfigAggregatorName
+    Export:
+      Name: !Sub '${AWS::StackName}-ConfigAggregator'
