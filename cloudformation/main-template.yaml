@@ -42,15 +42,6 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Function: !GetAtt ComplianceDataProcessor.Arn
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: data/
 
   # Bucket policy for public read access
   DashboardBucketPolicy:
@@ -86,7 +77,7 @@ Resources:
               Service: config.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/ConfigRole
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
       Policies:
         - PolicyName: OrganizationAggregatorPolicy
           PolicyDocument:
@@ -183,9 +174,13 @@ Resources:
                              for acc in accounts_response['Accounts']]
                   
                   # Get conformance pack compliance summary
-                  compliance_summary = config_client.get_aggregate_conformance_pack_compliance_summary(
-                      ConfigurationAggregatorName=aggregator_name
-                  )
+                  try:
+                      compliance_summary = config_client.get_aggregate_conformance_pack_compliance_summary(
+                          ConfigurationAggregatorName=aggregator_name
+                      )
+                  except Exception as e:
+                      print(f"No conformance packs found yet: {str(e)}")
+                      compliance_summary = {'AggregateConformancePackComplianceSummaries': []}
                   
                   # Get detailed compliance for each conformance pack
                   detailed_compliance = {}
@@ -280,44 +275,6 @@ Resources:
               
               return suggestions
 
-  # Lambda function for data processing
-  ComplianceDataProcessor:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub '${ConformancePackName}-data-processor'
-      Runtime: python3.12
-      Handler: index.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 300
-      MemorySize: 512
-      Code:
-        ZipFile: |
-          import json
-          import boto3
-          
-          def lambda_handler(event, context):
-              # Process S3 events and trigger dashboard updates
-              s3_client = boto3.client('s3')
-              
-              for record in event['Records']:
-                  bucket = record['s3']['bucket']['name']
-                  key = record['s3']['object']['key']
-                  
-                  if key.startswith('data/'):
-                      print(f"Processing compliance data update: {key}")
-                      # Additional processing logic can be added here
-              
-              return {'statusCode': 200, 'body': 'Processing completed'}
-
-  # Permission for S3 to invoke Lambda
-  S3InvokeLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ComplianceDataProcessor
-      Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn: !Sub '${DashboardBucket}/*'
-
   # EventBridge rule for scheduled data collection
   ComplianceDataSchedule:
     Type: AWS::Events::Rule
@@ -377,7 +334,7 @@ Resources:
                       AWS: !Sub 'arn:aws:iam::${!Ref AuditAccountId}:root'
                     Action: sts:AssumeRole
               ManagedPolicyArns:
-                - arn:aws:iam::aws:policy/service-role/ConfigRole
+                - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
                 - arn:aws:iam::aws:policy/ReadOnlyAccess
               Policies:
                 - PolicyName: ConfigCompliancePolicy
