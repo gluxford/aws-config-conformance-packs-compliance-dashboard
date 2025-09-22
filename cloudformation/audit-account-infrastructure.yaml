@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Audit account infrastructure for compliance dashboard'
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: AWS Organization ID
+  DashboardBucketName:
+    Type: String
+    Description: S3 bucket name for hosting the dashboard
+
+Resources:
+  # S3 Bucket for dashboard hosting
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DashboardBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # Bucket policy for public read access
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${DashboardBucket}/*'
+
+  # Lambda execution role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ComplianceDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - config:GetAggregateComplianceDetailsByConfigRule
+                  - config:GetAggregateConfigRuleComplianceSummary
+                  - config:GetAggregateConformancePackComplianceSummary
+                  - config:GetAggregateResourceConfig
+                  - config:DescribeConfigurationAggregators
+                  - config:DescribeConformancePacks
+                  - organizations:ListAccounts
+                  - organizations:DescribeOrganization
+                  - sts:AssumeRole
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${DashboardBucket}/*'
+
+  # Lambda function for data collection
+  ComplianceDataCollector:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: compliance-data-collector
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      Environment:
+        Variables:
+          DASHBOARD_BUCKET: !Ref DashboardBucket
+          ORGANIZATION_ID: !Ref OrganizationId
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timezone
+          
+          def lambda_handler(event, context):
+              config_client = boto3.client('config')
+              s3_client = boto3.client('s3')
+              org_client = boto3.client('organizations')
+              
+              bucket = os.environ['DASHBOARD_BUCKET']
+              
+              try:
+                  # Get organization accounts
+                  accounts = org_client.list_accounts()['Accounts']
+                  
+                  # Get aggregator name (assuming first one)
+                  aggregators = config_client.describe_configuration_aggregators()
+                  if not aggregators['ConfigurationAggregators']:
+                      raise Exception("No Config aggregator found")
+                  
+                  aggregator_name = aggregators['ConfigurationAggregators'][0]['ConfigurationAggregatorName']
+                  
+                  # Get conformance pack compliance summary
+                  compliance_summary = config_client.get_aggregate_conformance_pack_compliance_summary(
+                      ConfigurationAggregatorName=aggregator_name
+                  )
+                  
+                  # Process compliance data
+                  dashboard_data = {
+                      'lastUpdated': datetime.now(timezone.utc).isoformat(),
+                      'accounts': [{'accountId': acc['Id'], 'accountName': acc['Name']} for acc in accounts],
+                      'conformancePackSummary': compliance_summary['AggregateConformancePackComplianceSummaries'],
+                      'organizationCompliance': calculate_org_compliance(compliance_summary)
+                  }
+                  
+                  # Upload to S3
+                  s3_client.put_object(
+                      Bucket=bucket,
+                      Key='data/compliance-summary.json',
+                      Body=json.dumps(dashboard_data, indent=2),
+                      ContentType='application/json'
+                  )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('Data collection completed successfully')
+                  }
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'Error: {str(e)}')
+                  }
+          
+          def calculate_org_compliance(summary):
+              total_compliant = sum(pack.get('CompliantRuleCount', 0) for pack in summary['AggregateConformancePackComplianceSummaries'])
+              total_rules = sum(pack.get('TotalRuleCount', 0) for pack in summary['AggregateConformancePackComplianceSummaries'])
+              
+              return {
+                  'compliantRules': total_compliant,
+                  'totalRules': total_rules,
+                  'compliancePercentage': round((total_compliant / total_rules * 100) if total_rules > 0 else 0, 2)
+              }
+
+  # EventBridge rule for scheduled data collection
+  ComplianceDataSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Trigger compliance data collection every hour'
+      ScheduleExpression: 'rate(1 hour)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ComplianceDataCollector.Arn
+          Id: ComplianceDataCollectorTarget
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ComplianceDataCollector
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ComplianceDataSchedule.Arn
+
+Outputs:
+  DashboardURL:
+    Description: URL of the compliance dashboard
+    Value: !Sub 'http://${DashboardBucket}.s3-website-${AWS::Region}.amazonaws.com'
+  
+  DashboardBucket:
+    Description: S3 bucket hosting the dashboard
+    Value: !Ref DashboardBucket
