@@ -38,7 +38,7 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
 
-  # Bucket policy for public read access
+  # Bucket policy for public read access and management account access
   DashboardBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -49,6 +49,14 @@ Resources:
             Effect: Allow
             Principal: '*'
             Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::${DashboardBucket}/*'
+          - Sid: ManagementAccountAccess
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::288206176536:root'
+            Action:
+              - s3:GetObject
+              - s3:PutObject
             Resource: !Sub 'arn:aws:s3:::${DashboardBucket}/*'
 
   # Lambda execution role
