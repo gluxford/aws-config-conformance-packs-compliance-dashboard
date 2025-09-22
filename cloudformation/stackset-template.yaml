@@ -43,7 +43,7 @@ Resources:
     Type: AWS::Config::ConformancePack
     Properties:
       ConformancePackName: 'APRA-CPG-234-Compliance'
-      TemplateS3Uri: !Sub 'https://${ConformancePackBucket}.s3.amazonaws.com/conformance-packs/Operational-Best-Practices-for-APRA-CPG-234.yaml'
+      TemplateS3Uri: !Sub 's3://${ConformancePackBucket}/conformance-packs/Operational-Best-Practices-for-APRA-CPG-234.yaml'
 
 Outputs:
   ComplianceRoleArn:
