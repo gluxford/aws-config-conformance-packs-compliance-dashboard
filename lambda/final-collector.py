@@ -50,7 +50,6 @@ def lambda_handler(event, context):
             )
             rules_compliance = rules_response.get('AggregateComplianceByConfigRules', [])
             
-            # Calculate totals from all rules
             total_compliant = sum(1 for rule in rules_compliance if rule.get('Compliance', {}).get('ComplianceType') == 'COMPLIANT')
             total_non_compliant = sum(1 for rule in rules_compliance if rule.get('Compliance', {}).get('ComplianceType') == 'NON_COMPLIANT')
             total_rules = total_compliant + total_non_compliant
@@ -65,91 +64,42 @@ def lambda_handler(event, context):
 
         print(f"Initial data collection took {time.time() - start_time:.2f} seconds")
 
-        # Create rule suffix to conformance pack mapping
-        rule_suffix_to_pack = {}
+        # Get ALL non-compliant rules and their details
         non_compliant_rules = [rule for rule in rules_compliance if rule.get('Compliance', {}).get('ComplianceType') == 'NON_COMPLIANT']
         
-        # Build mapping by analyzing rule patterns per account
-        for rule in non_compliant_rules:
-            account_id = rule['AccountId']
-            rule_name = rule['ConfigRuleName']
-            
-            if '-conformance-pack-' in rule_name:
-                rule_suffix = rule_name.split('-conformance-pack-')[-1]
-                mapping_key = f"{account_id}:{rule_suffix}"
-                
-                if mapping_key not in rule_suffix_to_pack:
-                    account_packs = [p for p in conformance_packs_detail if p['AccountId'] == account_id]
-                    
-                    # Pattern-based matching for conformance pack assignment
-                    if 'iam-password' in rule_name or 'root-account' in rule_name or 'mfa-enabled' in rule_name:
-                        pack = next((p for p in account_packs if 'CIS' in p['ConformancePackName']), None)
-                    elif 's3-bucket' in rule_name or 'cloudtrail' in rule_name or 'vpc-flow' in rule_name:
-                        pack = next((p for p in account_packs if 'Security-Pillar' in p['ConformancePackName']), None)
-                    elif 'encryption' in rule_name or 'kms' in rule_name or 'api-gw' in rule_name or 'logging' in rule_name:
-                        pack = next((p for p in account_packs if 'NIST' in p['ConformancePackName']), None)
-                    else:
-                        pack = next((p for p in account_packs if 'APRA' in p['ConformancePackName']), None)
-                    
-                    if pack:
-                        rule_suffix_to_pack[mapping_key] = pack['ConformancePackName']
-
-        print(f"Created {len(rule_suffix_to_pack)} suffix mappings in {time.time() - start_time:.2f} seconds")
-
-        # Parallel processing function for rule details
+        # Process rules in parallel to get detailed findings
         def get_rule_details(rule):
             local_config_client = boto3.client('config')
             rule_details = []
             
             try:
-                details_response = local_config_client.get_aggregate_compliance_details_by_config_rule(
+                # Get ALL results for this rule using pagination
+                paginator = local_config_client.get_paginator('get_aggregate_compliance_details_by_config_rule')
+                page_iterator = paginator.paginate(
                     ConfigurationAggregatorName=aggregator_name,
                     ConfigRuleName=rule['ConfigRuleName'],
                     AccountId=rule['AccountId'],
-                    AwsRegion=rule['AwsRegion'],
-                    MaxResults=10
+                    AwsRegion=rule['AwsRegion']
                 )
                 
-                # Get conformance pack mapping - fix variable scope
-                rule_name = rule['ConfigRuleName']
-                account_id = rule['AccountId']
-                rule_suffix = None
-                specific_conformance_pack = None
-                
-                if '-conformance-pack-' in rule_name:
-                    rule_suffix = rule_name.split('-conformance-pack-')[-1]
-                    mapping_key = f"{account_id}:{rule_suffix}"
-                    specific_conformance_pack = rule_suffix_to_pack.get(mapping_key)
-                else:
-                    # APRA rules without conformance pack suffix
-                    account_packs = [p for p in conformance_packs_detail if p['AccountId'] == account_id]
-                    apra_pack = next((p for p in account_packs if 'APRA' in p['ConformancePackName']), None)
-                    if apra_pack:
-                        specific_conformance_pack = apra_pack['ConformancePackName']
-                
-                # Process results
-                for result in details_response.get('AggregateEvaluationResults', []):
-                    if result.get('ComplianceType') == 'NON_COMPLIANT':
-                        rule_details.append({
-                            'ConfigRuleName': rule['ConfigRuleName'],
-                            'AccountId': rule['AccountId'],
-                            'AwsRegion': rule['AwsRegion'],
-                            'ResourceType': result.get('EvaluationResultIdentifier', {}).get('EvaluationResultQualifier', {}).get('ResourceType'),
-                            'ResourceId': result.get('EvaluationResultIdentifier', {}).get('EvaluationResultQualifier', {}).get('ResourceId'),
-                            'ComplianceType': result.get('ComplianceType'),
-                            'ResultRecordedTime': result.get('ResultRecordedTime').isoformat() if result.get('ResultRecordedTime') else None,
-                            'ConformancePackName': specific_conformance_pack,
-                            'RuleSuffix': rule_suffix
-                        })
+                # Process ALL pages of results
+                for page in page_iterator:
+                    for result in page.get('AggregateEvaluationResults', []):
+                        if result.get('ComplianceType') == 'NON_COMPLIANT':
+                            rule_details.append({
+                                'ConfigRuleName': rule['ConfigRuleName'],
+                                'AccountId': rule['AccountId'],
+                                'AwsRegion': rule['AwsRegion'],
+                                'ResourceType': result.get('EvaluationResultIdentifier', {}).get('EvaluationResultQualifier', {}).get('ResourceType'),
+                                'ResourceId': result.get('EvaluationResultIdentifier', {}).get('EvaluationResultQualifier', {}).get('ResourceId'),
+                                'ComplianceType': result.get('ComplianceType'),
+                                'ResultRecordedTime': result.get('ResultRecordedTime').isoformat() if result.get('ResultRecordedTime') else None,
+                                'ConformancePackName': None  # Will be set after correlation
+                            })
                         
             except Exception as e:
-                # Add basic info if API call fails - fix variable scope
-                rule_name = rule['ConfigRuleName']
-                account_id = rule['AccountId']
-                rule_suffix = rule_name.split('-conformance-pack-')[-1] if '-conformance-pack-' in rule_name else None
-                mapping_key = f"{account_id}:{rule_suffix}" if rule_suffix else None
-                specific_conformance_pack = rule_suffix_to_pack.get(mapping_key) if mapping_key else None
-                
+                print(f"Error getting details for rule {rule['ConfigRuleName']}: {e}")
+                # Add basic info even if details fail
                 rule_details.append({
                     'ConfigRuleName': rule['ConfigRuleName'],
                     'AccountId': rule['AccountId'],
@@ -158,33 +108,83 @@ def lambda_handler(event, context):
                     'ResourceId': 'Unknown',
                     'ComplianceType': 'NON_COMPLIANT',
                     'ResultRecordedTime': None,
-                    'ConformancePackName': specific_conformance_pack,
-                    'RuleSuffix': rule_suffix
+                    'ConformancePackName': None
                 })
             
             return rule_details
 
-        # Process rules in parallel with limited concurrency
-        non_compliant_details = []
+        # Process rules in parallel
+        all_non_compliant_details = []
         print(f"Processing {len(non_compliant_rules)} rules in parallel...")
         
-        with ThreadPoolExecutor(max_workers=8) as executor:  # Reduced workers to avoid throttling
+        with ThreadPoolExecutor(max_workers=8) as executor:
             future_to_rule = {executor.submit(get_rule_details, rule): rule for rule in non_compliant_rules}
             
             completed = 0
             for future in as_completed(future_to_rule):
                 try:
                     rule_details = future.result()
-                    non_compliant_details.extend(rule_details)
+                    all_non_compliant_details.extend(rule_details)
                     completed += 1
                     
                     if completed % 50 == 0:
-                        print(f"Processed {completed}/{len(non_compliant_rules)} rules in {time.time() - start_time:.2f} seconds")
+                        print(f"Processed {completed}/{len(non_compliant_rules)} rules, collected {len(all_non_compliant_details)} details in {time.time() - start_time:.2f} seconds")
                         
                 except Exception as e:
                     print(f"Error processing rule: {e}")
 
-        print(f"Collected {len(non_compliant_details)} non-compliant details in {time.time() - start_time:.2f} seconds")
+        print(f"Collected {len(all_non_compliant_details)} non-compliant details in {time.time() - start_time:.2f} seconds")
+        
+        # NOW correlate each finding with its conformance pack
+        # Create a mapping of account+pack to the pack name
+        pack_mapping = {}
+        for pack in conformance_packs_detail:
+            pack_mapping[f"{pack['AccountId']}:{pack['ConformancePackName']}"] = pack['ConformancePackName']
+        
+        # For each finding, determine which conformance pack it belongs to
+        for detail in all_non_compliant_details:
+            account_id = detail['AccountId']
+            
+            # Find all conformance packs for this account
+            account_packs = [p for p in conformance_packs_detail if p['AccountId'] == account_id]
+            
+            # If there's only one pack for this account, assign it
+            if len(account_packs) == 1:
+                detail['ConformancePackName'] = account_packs[0]['ConformancePackName']
+            else:
+                # Multiple packs - need to determine which one based on the rule
+                # This is where we distribute rules across packs for the same account
+                rule_name = detail['ConfigRuleName'].lower()
+                
+                # Find NIST pack first (highest priority for encryption/logging rules)
+                nist_pack = next((p for p in account_packs if 'NIST' in p['ConformancePackName']), None)
+                if nist_pack and ('encryption' in rule_name or 'kms' in rule_name or 'logging' in rule_name or 'api-gw' in rule_name):
+                    detail['ConformancePackName'] = nist_pack['ConformancePackName']
+                    continue
+                
+                # Find CIS pack for identity/access rules
+                cis_pack = next((p for p in account_packs if 'CIS' in p['ConformancePackName']), None)
+                if cis_pack and ('iam-password' in rule_name or 'root-account' in rule_name or 'mfa' in rule_name):
+                    detail['ConformancePackName'] = cis_pack['ConformancePackName']
+                    continue
+                
+                # Find Security Pillar pack for infrastructure rules
+                security_pack = next((p for p in account_packs if 'Security-Pillar' in p['ConformancePackName']), None)
+                if security_pack and ('s3-bucket' in rule_name or 'cloudtrail' in rule_name or 'vpc' in rule_name):
+                    detail['ConformancePackName'] = security_pack['ConformancePackName']
+                    continue
+                
+                # Find APRA pack for remaining rules
+                apra_pack = next((p for p in account_packs if 'APRA' in p['ConformancePackName']), None)
+                if apra_pack:
+                    detail['ConformancePackName'] = apra_pack['ConformancePackName']
+                    continue
+                
+                # Fallback to first available pack
+                if account_packs:
+                    detail['ConformancePackName'] = account_packs[0]['ConformancePackName']
+
+        print(f"Correlated {len(all_non_compliant_details)} findings with conformance packs")
         
         # Prepare data
         data = {
@@ -193,8 +193,7 @@ def lambda_handler(event, context):
             'conformancePackSummary': compliance_summary.get('AggregateConformancePackComplianceSummaries', []),
             'conformancePackDetails': conformance_packs_detail,
             'rulesCompliance': rules_compliance,
-            'nonCompliantDetails': non_compliant_details,
-            'ruleSuffixToPackMapping': rule_suffix_to_pack,
+            'nonCompliantDetails': all_non_compliant_details,
             'organizationCompliance': {
                 'compliantRules': total_compliant,
                 'nonCompliantRules': total_non_compliant,
